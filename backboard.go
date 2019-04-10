@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,8 +29,21 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) < 2 || len(args) > 3 {
-		return fmt.Errorf("usage: %s <conn-string> [<listen-addr>]", args[0])
+	var (
+		flags      = flag.NewFlagSet("", flag.ContinueOnError)
+		bindAddr   = flags.String("bind", "", "listen address")
+		branch     = flags.String("branch", "", "default branch to display [required if --bind]")
+		connString = flags.String("conn", "", "connection string [required]")
+	)
+
+	if err := flags.Parse(args[1:]); err != nil {
+		flags.PrintDefaults()
+		return err
+	}
+
+	if *connString == "" {
+		flags.PrintDefaults()
+		return errors.New("--conn is required")
 	}
 
 	githubToken := os.Getenv("BACKBOARD_GITHUB_TOKEN")
@@ -37,8 +51,7 @@ func run(args []string) error {
 		return errors.New("missing BACKBOARD_GITHUB_TOKEN env var")
 	}
 
-	connString := args[1]
-	db, err := sql.Open("postgres", connString)
+	db, err := sql.Open("postgres", *connString)
 	if err != nil {
 		return err
 	}
@@ -55,13 +68,18 @@ func run(args []string) error {
 		&oauth2.Token{AccessToken: githubToken},
 	)))
 
-	if len(args) == 2 {
+	if *bindAddr == "" {
 		return syncAll(ctx, ghClient, db)
 	}
-	listenAddr := args[2]
+
+	if *branch == "" {
+		flags.PrintDefaults()
+		return errors.New("--branch flag is required")
+	}
+
 	go syncLoop(ctx, ghClient, db)
-	http.Handle("/", &server{db: db})
-	return http.ListenAndServe(listenAddr, nil)
+	http.Handle("/", &server{db: db, defaultBranch: *branch})
+	return http.ListenAndServe(*bindAddr, nil)
 }
 
 func syncLoop(ctx context.Context, ghClient *github.Client, db *sql.DB) {

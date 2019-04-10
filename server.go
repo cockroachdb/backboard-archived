@@ -264,6 +264,8 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
 
 type server struct {
 	db *sql.DB
+	// Used when no explicit branch is requested.
+	defaultBranch string
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -300,23 +302,27 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		return errors.New("no repos available")
 	}
 
-	var branch string
-	if s := r.URL.Query().Get("branch"); s != "" {
-		for _, b := range re.releaseBranches {
-			if b == s {
-				branch = b
-			}
+	branch := r.URL.Query().Get("branch")
+	if branch == "" {
+		branch = s.defaultBranch
+	}
+	branchOk := false
+	for _, b := range re.releaseBranches {
+		if b == branch {
+			branchOk = true
+			break
 		}
-		if branch == "" {
-			return fmt.Errorf("%q is not a release branch", branch)
-		}
-	} else if len(re.releaseBranches) > 0 {
-		branch = re.releaseBranches[0]
-	} else {
-		return fmt.Errorf("no release branches for repo %s available", re)
+	}
+	if !branchOk {
+		return fmt.Errorf("%q is not a release branch", branch)
 	}
 
-	commits := re.masterCommits.truncate(re.branchMergeBases[branch])
+	var commits []commit
+	if sha, ok := re.branchMergeBases[branch]; ok {
+		commits = re.masterCommits.truncate(sha)
+	} else {
+		return fmt.Errorf("unknown branch %q", branch)
+	}
 
 	authors := map[user]struct{}{}
 	for _, c := range commits {
@@ -357,9 +363,12 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 	for i, c := range commits {
 		// TODO(benesch): these rowspan computations hurt to look at.
 		masterPR := re.masterPRs[string(c.sha)]
+		if masterPR == nil {
+			continue
+		}
 		// TODO(benesch): masterPR should never be nil!
 		if masterPR != nil && (lastMasterPR == nil || lastMasterPR.number != masterPR.number) {
-			if masterPRStart >= 0 {
+			if masterPRStart >= 0 && masterPRStart < len(acommits) {
 				acommits[masterPRStart].MasterPRRowSpan = i - masterPRStart
 			}
 			masterPRStart = i
@@ -367,7 +376,7 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		}
 		backportPR := re.branchPRs[c.MessageID()][branch]
 		if !((lastBackportPR == nil && backportPR == nil && lastMasterPR != masterPR) || (lastBackportPR != nil && backportPR != nil && lastBackportPR.number == backportPR.number)) {
-			if backportPRStart >= 0 {
+			if backportPRStart >= 0 && backportPRStart < len(acommits) {
 				acommits[backportPRStart].BackportPRRowSpan = i - backportPRStart
 			}
 			backportPRStart = i
@@ -395,10 +404,10 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		})
 		masterPRs[masterPR.number] = append(masterPRs[masterPR.number], c.sha.String())
 	}
-	if masterPRStart >= 0 {
+	if masterPRStart >= 0 && masterPRStart < len(acommits) {
 		acommits[masterPRStart].MasterPRRowSpan = len(acommits) - masterPRStart
 	}
-	if backportPRStart >= 0 {
+	if backportPRStart >= 0 && backportPRStart < len(acommits) {
 		acommits[backportPRStart].BackportPRRowSpan = len(acommits) - backportPRStart
 	}
 
