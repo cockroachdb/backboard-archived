@@ -189,6 +189,10 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
                 </select>
                 <input type="submit" value="go">
             </label>
+            <label>
+                <span>last refresh</span>
+				<span>{{.Repo.LastRefresh.Format "2006-01-02 15:04"}}</span>
+            </label>
         </form>
         <form>
             <label>

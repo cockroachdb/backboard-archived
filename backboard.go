@@ -9,12 +9,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"time"
-
-	"golang.org/x/oauth2"
 
 	"github.com/google/go-github/github"
 	_ "github.com/lib/pq" // activate postgres database adapter
+	"golang.org/x/oauth2"
+	"golang.org/x/sync/errgroup"
 )
 
 var repos = []repo{
@@ -26,6 +27,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "fatal: %s\n", err)
 		os.Exit(1)
 	}
+	os.Exit(0)
 }
 
 func run(args []string) error {
@@ -55,20 +57,38 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+
+	work := &errgroup.Group{}
+
+	// Create a top-level context that responds to SIGINT.
+	ctx, shutdown := context.WithCancel(context.Background())
+	defer shutdown()
+	ch := make(chan os.Signal)
+	signal.Notify(ch, os.Interrupt)
+	work.Go(func() error {
+		select {
+		case <-ch:
+			log.Print("Shutting down")
+			shutdown()
+		case <-ctx.Done():
+		}
+		return nil
+	})
+
 	if err := db.PingContext(ctx); err != nil {
 		return err
-	}
-
-	if err := bootstrap(ctx, db); err != nil {
-		return fmt.Errorf("while bootstrapping: %s", err)
 	}
 
 	ghClient := github.NewClient(oauth2.NewClient(ctx, oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: githubToken},
 	)))
 
+	// Just sync files instead of starting a server.
 	if *bindAddr == "" {
+		if err := bootstrap(ctx, db); err != nil {
+			return fmt.Errorf("while bootstrapping: %s", err)
+		}
+
 		return syncAll(ctx, ghClient, db)
 	}
 
@@ -77,17 +97,68 @@ func run(args []string) error {
 		return errors.New("--branch flag is required")
 	}
 
+	// Configure the HTTP handler with just /healthz until bootstrapped.
+	bootstrapped := false
+
+	handler := &http.ServeMux{}
+	handler.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
+		ctx, _ := context.WithTimeout(ctx, 5*time.Second)
+		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+		// Look for /healthz?ready=1 to enable network traffic.
+		if request.URL.Query().Get("ready") != "" && !bootstrapped {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			writer.Write([]byte("Bootstrapping"))
+		} else if err := db.PingContext(ctx); err != nil {
+			writer.WriteHeader(http.StatusInternalServerError)
+			writer.Write([]byte(err.Error()))
+		} else {
+			writer.WriteHeader(http.StatusOK)
+			writer.Write([]byte("OK"))
+		}
+	})
+
+	// Start the server, ignoring graceful-shutdown error value.
+	s := &http.Server{Addr: *bindAddr, Handler: handler}
+	work.Go(func() error {
+		err := s.ListenAndServe()
+		if err == http.ErrServerClosed {
+			return nil
+		}
+		return err
+	})
+	// Terminate the server when the top-level context is cancelled.
+	work.Go(func() error {
+		<-ctx.Done()
+		timeout, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		return s.Shutdown(timeout)
+	})
+
+	// Download all necessary data.
+	if err := bootstrap(ctx, db); err != nil {
+		return fmt.Errorf("while bootstrapping: %s", err)
+	}
+
+	// Add the main handler only after all of the data is set up.
+	handler.Handle("/", &server{db: db, defaultBranch: *branch})
+	// Allow readiness check to proceed.
+	bootstrapped = true
+	log.Print("Bootstrapping complete")
+	// Launch the sync loop.
 	go syncLoop(ctx, ghClient, db)
-	http.Handle("/", &server{db: db, defaultBranch: *branch})
-	return http.ListenAndServe(*bindAddr, nil)
+	return work.Wait()
 }
 
 func syncLoop(ctx context.Context, ghClient *github.Client, db *sql.DB) {
 	for {
-		if err := syncAll(ctx, ghClient, db); err != nil {
-			log.Printf("sync error: %s", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Minute):
+			// TODO(benesch): webhook support?
+			if err := syncAll(ctx, ghClient, db); err != nil {
+				log.Printf("sync error: %s", err)
+			}
 		}
-		// TODO(benesch): webhook support?
-		<-time.After(30 * time.Second)
 	}
 }
