@@ -44,8 +44,8 @@ func spawn(args ...string) error {
 	} else {
 		cmd = exec.Command(args[0], args[1:]...)
 	}
-	cmd.Stdin = os.Stdin
+	cmd.Stdin = nil
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return errors.Wrapf(cmd.Run(), "spawned %s:", args)
 }

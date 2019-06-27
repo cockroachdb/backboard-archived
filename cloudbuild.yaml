@@ -1,0 +1,15 @@
+# There's just a single step here, to delegate to Docker, but you can
+# compose an arbitrary number of tools/containers to run in order
+# to produce a deployable image.
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: [ 'build',
+          '-f', 'docker/Dockerfile',
+          '-t', 'gcr.io/$PROJECT_ID/cockroachdb/backboard:$BRANCH_NAME',
+          '-t', 'gcr.io/$PROJECT_ID/cockroachdb/backboard:$SHORT_SHA',
+          '.'
+  ]
+images:
+- 'gcr.io/$PROJECT_ID/cockroachdb/backboard:$BRANCH_NAME'
+- 'gcr.io/$PROJECT_ID/cockroachdb/backboard:$SHORT_SHA'
+

@@ -85,6 +85,8 @@ type repo struct {
 
 	masterPRs map[string]*pr            // by SHA
 	branchPRs map[string]map[string]*pr // by message ID
+
+	lastRefresh time.Time
 }
 
 func (r repo) path() string {
@@ -166,12 +168,16 @@ func (r *repo) refresh(db *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-
+	r.lastRefresh = time.Now().UTC()
 	return nil
 }
 
 func (r repo) ID() int64 {
 	return r.id
+}
+
+func (r repo) LastRefresh() time.Time {
+	return r.lastRefresh
 }
 
 func (r repo) String() string {
