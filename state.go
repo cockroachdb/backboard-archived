@@ -448,6 +448,12 @@ func syncPR(ctx context.Context, db *sql.DB, repo *repo, pr *github.PullRequest)
 	prHead := fmt.Sprintf("refs/pull/%d/head", pr.GetNumber())
 	commits, err := loadCommits(*repo, prHead, "^"+prBase)
 	if err != nil {
+		// Hack for PR 47761, which seems to be missing from GitHub as of 2020-05-19.
+		// https://github.com/cockroachdb/dev-inf/issues/100
+		if strings.Contains(err.Error(), "exit status 128") {
+			log.Printf("skipping PR sync for %d due to missing refspec", pr.GetID())
+			return nil
+		}
 		return err
 	}
 
