@@ -81,7 +81,7 @@ spec:
             limits:
               # Needs more CPU and memory when bootstrapping.
               cpu: "2"
-              memory: "512Mi"
+              memory: "768Mi"
           volumeMounts:
             - mountPath: "/secrets"
               name: secrets
