@@ -29,7 +29,7 @@ spec:
         app: backboard
     spec:
       containers:
-        - image: gcr.io/cockroach-dev-inf/cockroachdb/backboard:master-bob
+        - image: "gcr.io/cockroach-dev-inf/cockroachdb/backboard:master"
           imagePullPolicy: Always
           name: backboard
           env:
@@ -56,8 +56,8 @@ spec:
           command: [
             "backboard",
             "--bind", "0.0.0.0:80",
-            "--conn", "postgres://$(DB_USER)@$(DB_ADDR)/$(DB_NAME)?sslmode=verify-full&sslrootcert=/secrets/ca.crt&sslcert=/secrets/client.backboard.crt&sslkey=/secrets/client.backboard.key",
-            "--branch", "release-19.1",
+            "--conn", "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_ADDR)/$(DB_NAME)?sslmode=verify-full&sslrootcert=/secrets/ca.crt",
+            "--branch", "release-21.1",
           ]
           ports:
             - containerPort: 80
