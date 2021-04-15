@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS pr_commits (
 	PRIMARY KEY (pr_id, sha)
 );
 
+CREATE TABLE IF NOT EXISTS pr_labels (
+    pr_id int REFERENCES prs,
+    label string,
+    PRIMARY KEY (pr_id, label)
+)
+
 CREATE TABLE IF NOT EXISTS exclusions (
 	message_id bytes PRIMARY KEY
 );
@@ -332,6 +338,7 @@ type pr struct {
 	repo     *repo
 	number   int
 	mergedAt pq.NullTime
+	labels   []string
 }
 
 func (p *pr) Number() int {
@@ -358,6 +365,10 @@ func (p *pr) MergedAt() string {
 		return p.mergedAt.Time.Format("2006-01-02 15:04:05")
 	}
 	return "(unknown)"
+}
+
+func (p *pr) Labels() []string {
+	return p.labels
 }
 
 func syncAll(ctx context.Context, ghClient *github.Client, db *sql.DB) error {
@@ -431,6 +442,22 @@ type queryer interface {
 }
 
 func isPRUpToDate(ctx context.Context, q queryer, pr *github.PullRequest) (bool, error) {
+	// Support for PR labels was added later, so some PRs that are otherwise
+	// up-to-date need be re-synced. This block can be removed at any point
+	// in the future, but there isn't much harm in keeping it.
+	if len(pr.Labels) != 0 {
+		var labelCount int
+		err := q.QueryRow(`SELECT count(*) FROM pr_labels WHERE pr_id = $1`, pr.GetID()).Scan(&labelCount)
+		if err == sql.ErrNoRows {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		if labelCount != len(pr.Labels) {
+			return false, nil
+		}
+	}
+
 	var updatedAt time.Time
 	err := q.QueryRow(`SELECT updated_at FROM prs WHERE id = $1`, pr.GetID()).Scan(&updatedAt)
 	if err == sql.ErrNoRows {
@@ -488,6 +515,18 @@ func syncPR(ctx context.Context, db *sql.DB, repo *repo, pr *github.PullRequest)
 				c.MessageID(),
 				c.Author.Email,
 				i,
+			); err != nil {
+				return err
+			}
+		}
+		for _, l := range pr.Labels {
+			if l.GetName() == "" {
+				continue
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO pr_labels (pr_id, label) VALUES ($1, $2)`,
+				pr.GetID(),
+				l.GetName(),
 			); err != nil {
 				return err
 			}

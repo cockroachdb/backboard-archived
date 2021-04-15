@@ -220,6 +220,22 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
                 <input type="submit" value="go">
             </label>
         </form>
+        <form>
+            <label>
+                <span>label</span>
+                <select name="label">
+                    <option value="">All labels</option>
+                    {{range .Labels}}
+                        <option {{if eq . $.Label}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+                <input type="hidden" name="repo" value="{{.Repo.ID}}">
+                <input type="hidden" name="branch" value="{{.Branch}}">
+                <input type="hidden" name="author" value="{{.Author}}">
+                <input type="submit" value="go">
+            </label>
+        </form>
+
         <!--<form>
             <label>
                 <span>show excluded</span>
@@ -358,6 +374,32 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		return strings.Compare(sortedAuthors[i].Email, sortedAuthors[j].Email) < 0
 	})
 
+	labels := map[string]struct{}{}
+	for _, pr := range re.masterPRs {
+		for _, l := range pr.labels {
+			labels[l] = struct{}{}
+		}
+	}
+	var label string
+	if s := r.URL.Query().Get("label"); s != "" {
+		for l := range labels {
+			if l == s {
+				label = s
+				break
+			}
+		}
+		if label == "" {
+			return fmt.Errorf("%q is not a recognized label", s)
+		}
+	}
+	var sortedLabels []string
+	for l := range labels {
+		sortedLabels = append(sortedLabels, l)
+	}
+	sort.Slice(sortedLabels, func(i, j int) bool {
+		return strings.Compare(sortedLabels[i], sortedLabels[j]) < 0
+	})
+
 	masterPRs := map[int][]string{}
 	var acommits []acommit
 	var lastMasterPR *pr
@@ -369,6 +411,18 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		masterPR := re.masterPRs[string(c.sha)]
 		if masterPR == nil {
 			continue
+		}
+		if label != "" {
+			matchingLabel := false
+			for _, l := range masterPR.labels {
+				if l == label {
+					matchingLabel = true
+					break
+				}
+			}
+			if !matchingLabel {
+				continue
+			}
 		}
 		// TODO(benesch): masterPR should never be nil!
 		if masterPR != nil && (lastMasterPR == nil || lastMasterPR.number != masterPR.number) {
@@ -423,6 +477,8 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		Branch    string
 		Authors   []user
 		Author    user
+        Labels    []string
+        Label     string
 		MasterPRs map[int][]string
 	}{
 		Repos:     repos,
@@ -432,6 +488,8 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		Branch:    branch,
 		Authors:   sortedAuthors,
 		Author:    author,
+        Labels:    sortedLabels,
+        Label:     label,
 		MasterPRs: masterPRs,
 	}); err != nil {
 		return err
