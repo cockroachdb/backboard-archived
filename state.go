@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS pr_commits (
 	PRIMARY KEY (pr_id, sha)
 );
 
+CREATE TABLE IF NOT EXISTS pr_labels (
+    pr_id int REFERENCES prs,
+    label string,
+    PRIMARY KEY (pr_id, label)
+);
+
 CREATE TABLE IF NOT EXISTS exclusions (
 	message_id bytes PRIMARY KEY
 );
@@ -125,9 +131,11 @@ func (r *repo) refresh(db *sql.DB) error {
 
 	r.masterPRs = map[string]*pr{}
 	rows, err := db.Query(
-		`SELECT number, merged_at, sha
+		`SELECT number, merged_at, sha, array_agg(prl.label)
 		FROM pr_commits JOIN prs ON pr_commits.pr_id = prs.id
-		WHERE merged_at IS NOT NULL AND base_branch = 'master'`)
+        LEFT JOIN pr_labels prl ON prs.id = prl.pr_id
+		WHERE merged_at IS NOT NULL AND base_branch = 'master'
+		GROUP BY number, merged_at, sha`)
 	if err != nil {
 		return err
 	}
@@ -135,8 +143,14 @@ func (r *repo) refresh(db *sql.DB) error {
 	for rows.Next() {
 		var s string
 		pr := &pr{repo: r}
-		if err := rows.Scan(&pr.number, &pr.mergedAt, &s); err != nil {
+		var tmp []sql.NullString
+		if err := rows.Scan(&pr.number, &pr.mergedAt, &s, pq.Array(&tmp)); err != nil {
 			return err
+		}
+		for _, t := range tmp {
+			if t.Valid {
+				pr.labels = append(pr.labels, t.String)
+			}
 		}
 		r.masterPRs[s] = pr
 	}
@@ -146,9 +160,11 @@ func (r *repo) refresh(db *sql.DB) error {
 
 	r.branchPRs = map[string]map[string]*pr{}
 	rows, err = db.Query(
-		`SELECT number, merged_at, message_id, base_branch
-		FROM pr_commits JOIN prs ON pr_commits.pr_id = prs.id
-		WHERE merged_at IS NOT NULL OR open`)
+		`SELECT number, merged_at, message_id, base_branch, array_agg(prl.label)
+		FROM pr_commits JOIN prs ON pr_commits.pr_id = prs.id LEFT JOIN pr_labels prl ON prs.id = prl.pr_id
+		WHERE merged_at IS NOT NULL OR open
+		GROUP BY number, merged_at, message_id, base_branch`)
+
 	if err != nil {
 		return err
 	}
@@ -157,8 +173,14 @@ func (r *repo) refresh(db *sql.DB) error {
 		var messageID string
 		var baseBranch string
 		p := &pr{repo: r}
-		if err := rows.Scan(&p.number, &p.mergedAt, &messageID, &baseBranch); err != nil {
+		var tmp []sql.NullString
+		if err := rows.Scan(&p.number, &p.mergedAt, &messageID, &baseBranch, pq.Array(&tmp)); err != nil {
 			return err
+		}
+		for _, t := range tmp {
+			if t.Valid {
+				p.labels = append(p.labels, t.String)
+			}
 		}
 		if r.branchPRs[messageID] == nil {
 			r.branchPRs[messageID] = map[string]*pr{}
@@ -332,6 +354,7 @@ type pr struct {
 	repo     *repo
 	number   int
 	mergedAt pq.NullTime
+	labels   []string
 }
 
 func (p *pr) Number() int {
@@ -358,6 +381,10 @@ func (p *pr) MergedAt() string {
 		return p.mergedAt.Time.Format("2006-01-02 15:04:05")
 	}
 	return "(unknown)"
+}
+
+func (p *pr) Labels() string {
+	return strings.Join(p.labels, ", ")
 }
 
 func syncAll(ctx context.Context, ghClient *github.Client, db *sql.DB) error {
@@ -431,6 +458,22 @@ type queryer interface {
 }
 
 func isPRUpToDate(ctx context.Context, q queryer, pr *github.PullRequest) (bool, error) {
+	// Support for PR labels was added later, so some PRs that are otherwise
+	// up-to-date need be re-synced. This block can be removed at any point
+	// in the future, but there isn't much harm in keeping it.
+	if len(pr.Labels) != 0 {
+		var labelCount int
+		err := q.QueryRow(`SELECT count(*) FROM pr_labels WHERE pr_id = $1`, pr.GetID()).Scan(&labelCount)
+		if err == sql.ErrNoRows {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		if labelCount != len(pr.Labels) {
+			return false, nil
+		}
+	}
+
 	var updatedAt time.Time
 	err := q.QueryRow(`SELECT updated_at FROM prs WHERE id = $1`, pr.GetID()).Scan(&updatedAt)
 	if err == sql.ErrNoRows {
@@ -488,6 +531,21 @@ func syncPR(ctx context.Context, db *sql.DB, repo *repo, pr *github.PullRequest)
 				c.MessageID(),
 				c.Author.Email,
 				i,
+			); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`DELETE FROM pr_labels WHERE pr_id = $1`, pr.GetID()); err != nil {
+			return err
+		}
+		for _, l := range pr.Labels {
+			if !strings.HasPrefix(l.GetName(), "backport-") {
+				continue
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO pr_labels (pr_id, label) VALUES ($1, $2)`,
+				pr.GetID(),
+				l.GetName(),
 			); err != nil {
 				return err
 			}
