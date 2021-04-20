@@ -220,6 +220,22 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
                 <input type="submit" value="go">
             </label>
         </form>
+        <form>
+            <label>
+                <span>label</span>
+                <select name="label">
+                    <option value="">All labels</option>
+                    {{range .Labels}}
+                        <option {{if eq . $.Label}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+                <input type="hidden" name="repo" value="{{.Repo.ID}}">
+                <input type="hidden" name="branch" value="{{.Branch}}">
+                <input type="hidden" name="author" value="{{.Author}}">
+                <input type="submit" value="go">
+            </label>
+        </form>
+
         <!--<form>
             <label>
                 <span>show excluded</span>
@@ -239,6 +255,7 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
         <th>MPR</th>
         <th>BPR</th>
         <th>Ok?</th>
+        <th>Labels</th>
         <th></th>
     </tr>
     </thead>
@@ -256,6 +273,9 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
 				<td class="backport-border" rowspan="{{.BackportPRRowSpan}}"><a href="{{.BackportPR.URL}}">{{.BackportPR}}</a></td>
 			{{end}}
             <td class="backport-border center">{{.BackportStatus}}</td>
+            {{if .MasterPRRowSpan}}
+                <td class="master-border" rowspan="{{.MasterPRRowSpan}}">{{.MasterPR.Labels}}</td>
+            {{end}}
         </tr>
     {{end}}
     </tbody>
@@ -358,6 +378,50 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		return strings.Compare(sortedAuthors[i].Email, sortedAuthors[j].Email) < 0
 	})
 
+	labels := map[string]struct{}{}
+	for _, pr := range re.masterPRs {
+		for _, l := range pr.labels {
+			labels[l] = struct{}{}
+		}
+	}
+	var label string
+	if s := r.URL.Query().Get("label"); s != "" {
+		for l := range labels {
+			if l == s {
+				label = s
+				break
+			}
+		}
+		if label == "" {
+			return fmt.Errorf("%q is not a recognized label", s)
+		}
+		var newCommits []commit
+		for _, c := range commits {
+			masterPR, ok := re.masterPRs[string(c.sha)]
+			if !ok {
+				return fmt.Errorf("%s is not a commit on the master branch", c.sha)
+			}
+			matchingLabel := false
+			for _, l := range masterPR.labels {
+				if l == label {
+					matchingLabel = true
+					break
+				}
+			}
+			if matchingLabel {
+				newCommits = append(newCommits, c)
+			}
+		}
+		commits = newCommits
+	}
+	var sortedLabels []string
+	for l := range labels {
+		sortedLabels = append(sortedLabels, l)
+	}
+	sort.Slice(sortedLabels, func(i, j int) bool {
+		return strings.Compare(sortedLabels[i], sortedLabels[j]) < 0
+	})
+
 	masterPRs := map[int][]string{}
 	var acommits []acommit
 	var lastMasterPR *pr
@@ -423,6 +487,8 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		Branch    string
 		Authors   []user
 		Author    user
+		Labels    []string
+		Label     string
 		MasterPRs map[int][]string
 	}{
 		Repos:     repos,
@@ -432,6 +498,8 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		Branch:    branch,
 		Authors:   sortedAuthors,
 		Author:    author,
+		Labels:    sortedLabels,
+		Label:     label,
 		MasterPRs: masterPRs,
 	}); err != nil {
 		return err
