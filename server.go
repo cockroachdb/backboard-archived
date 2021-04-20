@@ -255,7 +255,7 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
         <th>MPR</th>
         <th>BPR</th>
         <th>Ok?</th>
-		<th>Labels</th>
+        <th>Labels</th>
         <th></th>
     </tr>
     </thead>
@@ -275,7 +275,7 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
             <td class="backport-border center">{{.BackportStatus}}</td>
             {{if .MasterPRRowSpan}}
                 <td class="master-border" rowspan="{{.MasterPRRowSpan}}">{{.MasterPR.Labels}}</td>
-			{{end}}
+            {{end}}
         </tr>
     {{end}}
     </tbody>
@@ -487,8 +487,8 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		Branch    string
 		Authors   []user
 		Author    user
-        Labels    []string
-        Label     string
+		Labels    []string
+		Label     string
 		MasterPRs map[int][]string
 	}{
 		Repos:     repos,
@@ -498,8 +498,8 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 		Branch:    branch,
 		Authors:   sortedAuthors,
 		Author:    author,
-        Labels:    sortedLabels,
-        Label:     label,
+		Labels:    sortedLabels,
+		Label:     label,
 		MasterPRs: masterPRs,
 	}); err != nil {
 		return err

@@ -57,9 +57,9 @@ CREATE TABLE IF NOT EXISTS pr_commits (
 );
 
 CREATE TABLE IF NOT EXISTS pr_labels (
-    pr_id int REFERENCES prs,
-    label string,
-    PRIMARY KEY (pr_id, label)
+	pr_id int REFERENCES prs,
+	label string,
+	PRIMARY KEY (pr_id, label)
 );
 
 CREATE TABLE IF NOT EXISTS exclusions (
@@ -132,8 +132,9 @@ func (r *repo) refresh(db *sql.DB) error {
 	r.masterPRs = map[string]*pr{}
 	rows, err := db.Query(
 		`SELECT number, merged_at, sha, array_agg(prl.label)
-		FROM pr_commits JOIN prs ON pr_commits.pr_id = prs.id
-        LEFT JOIN pr_labels prl ON prs.id = prl.pr_id
+		FROM pr_commits
+		JOIN prs ON pr_commits.pr_id = prs.id
+		LEFT JOIN pr_labels prl ON prs.id = prl.pr_id
 		WHERE merged_at IS NOT NULL AND base_branch = 'master'
 		GROUP BY number, merged_at, sha`)
 	if err != nil {
@@ -143,11 +144,11 @@ func (r *repo) refresh(db *sql.DB) error {
 	for rows.Next() {
 		var s string
 		pr := &pr{repo: r}
-		var tmp []sql.NullString
-		if err := rows.Scan(&pr.number, &pr.mergedAt, &s, pq.Array(&tmp)); err != nil {
+		var labels []sql.NullString
+		if err := rows.Scan(&pr.number, &pr.mergedAt, &s, pq.Array(&labels)); err != nil {
 			return err
 		}
-		for _, t := range tmp {
+		for _, t := range labels {
 			if t.Valid {
 				pr.labels = append(pr.labels, t.String)
 			}
@@ -161,7 +162,9 @@ func (r *repo) refresh(db *sql.DB) error {
 	r.branchPRs = map[string]map[string]*pr{}
 	rows, err = db.Query(
 		`SELECT number, merged_at, message_id, base_branch, array_agg(prl.label)
-		FROM pr_commits JOIN prs ON pr_commits.pr_id = prs.id LEFT JOIN pr_labels prl ON prs.id = prl.pr_id
+		FROM pr_commits
+		JOIN prs ON pr_commits.pr_id = prs.id
+		LEFT JOIN pr_labels prl ON prs.id = prl.pr_id
 		WHERE merged_at IS NOT NULL OR open
 		GROUP BY number, merged_at, message_id, base_branch`)
 
@@ -173,11 +176,11 @@ func (r *repo) refresh(db *sql.DB) error {
 		var messageID string
 		var baseBranch string
 		p := &pr{repo: r}
-		var tmp []sql.NullString
-		if err := rows.Scan(&p.number, &p.mergedAt, &messageID, &baseBranch, pq.Array(&tmp)); err != nil {
+		var labels []sql.NullString
+		if err := rows.Scan(&p.number, &p.mergedAt, &messageID, &baseBranch, pq.Array(&labels)); err != nil {
 			return err
 		}
-		for _, t := range tmp {
+		for _, t := range labels {
 			if t.Valid {
 				p.labels = append(p.labels, t.String)
 			}
