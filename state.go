@@ -211,20 +211,20 @@ func (r repo) String() string {
 
 type commits struct {
 	commits    []commit
-	shas       map[string]struct{}
-	messageIDs map[string]struct{}
+	shas       map[string]int
+	messageIDs map[string]int
 }
 
 func (cs *commits) insert(c commit) {
 	cs.commits = append(cs.commits, c)
 	if cs.shas == nil {
-		cs.shas = map[string]struct{}{}
+		cs.shas = map[string]int{}
 	}
 	if cs.messageIDs == nil {
-		cs.messageIDs = map[string]struct{}{}
+		cs.messageIDs = map[string]int{}
 	}
-	cs.shas[string(c.sha)] = struct{}{}
-	cs.messageIDs[c.MessageID()] = struct{}{}
+	cs.shas[string(c.sha)] = len(cs.commits) - 1
+	cs.messageIDs[c.MessageID()] = len(cs.commits) - 1
 }
 
 func (cs commits) subtract(cs0 commits) []commit {
@@ -269,6 +269,7 @@ type commit struct {
 	title      string
 	body       string
 	merge      bool
+	oldestTag  string
 }
 
 func (c commit) SHA() sha {
@@ -295,6 +296,13 @@ type acommit struct {
 	MasterPRRowSpan   int
 	BackportPR        *pr
 	BackportPRRowSpan int
+	oldestTags        []string
+}
+
+// OldestTags is used to format the slice correctly
+// in the template.
+func (a *acommit) OldestTags() string {
+	return strings.Join(a.oldestTags, ", ")
 }
 
 const commitFormat = "%H%x00%s%x00%cI%x00%aE%x00%P"
@@ -321,12 +329,22 @@ func loadCommits(re repo, constraints ...string) (cs commits, err error) {
 			return commits{}, err
 		}
 		authorEmail := fields[3]
+		findTagArgs := []string{
+			"git", "-C", re.path(), "describe", "--match", "v[0-9]*", "--contains", sha.String(),
+		}
+		foundTag, err := capture(findTagArgs...)
+		if err != nil {
+			foundTag = strings.Split(foundTag, "~")[0]
+		} else {
+			foundTag = ""
+		}
 		cs.insert(commit{
 			sha:        sha,
 			CommitDate: commitDate,
 			Author:     user{authorEmail},
 			title:      fields[1],
 			merge:      strings.Count(fields[4], " ") > 0,
+			oldestTag:  foundTag,
 		})
 	}
 	return cs, err
@@ -402,7 +420,7 @@ func syncAll(ctx context.Context, ghClient *github.Client, db *sql.DB) error {
 func syncRepo(ctx context.Context, ghClient *github.Client, db *sql.DB, repo *repo) error {
 	log.Printf("syncing %s", repo)
 	defer log.Printf("done syncing %s", repo)
-	if err := spawn("git", "-C", repo.path(), "fetch"); err != nil {
+	if err := spawn("git", "-C", repo.path(), "fetch", "--tags"); err != nil {
 		return err
 	}
 
