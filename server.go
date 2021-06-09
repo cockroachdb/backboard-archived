@@ -252,6 +252,7 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
         <th>Merged At</th>
         <th>Author</th>
         <th>Title</th>
+        <th>Tags</th>
         <th>MPR</th>
         <th>BPR</th>
         <th>Ok?</th>
@@ -266,6 +267,7 @@ var indexTemplate = template.Must(template.New("index.html").Parse(`<!doctype ht
             <td class="master-border">{{.MasterPR.MergedAt}}</td>
             <td class="master-border" title="{{.Author.Email}}">{{.Author.Short}}</td>
             <td class="master-border">{{.Title}}</td>
+            <td class="master-border">{{.OldestTags}}</td>
             {{if .MasterPRRowSpan}}
                 <td class="master-border" rowspan="{{.MasterPRRowSpan}}"><a href="{{.MasterPR.URL}}">{{.MasterPR}}</a></td>
 			{{end}}
@@ -429,6 +431,10 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 	var lastBackportPR *pr
 	backportPRStart := -1
 	for i, c := range commits {
+		var oldestTags []string
+		if len(c.oldestTag) > 0 {
+			oldestTags = append(oldestTags, c.oldestTag)
+		}
 		// TODO(benesch): these rowspan computations hurt to look at.
 		masterPR := re.masterPRs[string(c.sha)]
 		if masterPR == nil {
@@ -459,9 +465,12 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 				backportStatus = "◷"
 			}
 		}
-		// TODO(benesch): redundant. which to keep?
-		if _, backported := re.branchCommits[branch].messageIDs[c.MessageID()]; backported {
+		if cIdx, backported := re.branchCommits[branch].messageIDs[c.MessageID()]; backported {
+			backportCommit := re.branchCommits[branch].commits[cIdx]
+			oldestTags = append(oldestTags, backportCommit.oldestTag)
+			// TODO(benesch): redundant. which to keep?
 			backportStatus = "✓"
+
 		}
 		acommits = append(acommits, acommit{
 			commit:         c,
@@ -469,6 +478,7 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 			MasterPR:       masterPR,
 			BackportPR:     backportPR,
 			Backportable:   backportPR == nil,
+			oldestTags:     oldestTags,
 		})
 		masterPRs[masterPR.number] = append(masterPRs[masterPR.number], c.sha.String())
 	}
