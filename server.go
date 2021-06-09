@@ -465,12 +465,18 @@ func (s *server) serveBoard(w http.ResponseWriter, r *http.Request) error {
 				backportStatus = "◷"
 			}
 		}
-		if cIdx, backported := re.branchCommits[branch].messageIDs[c.MessageID()]; backported {
-			backportCommit := re.branchCommits[branch].commits[cIdx]
-			oldestTags = append(oldestTags, backportCommit.oldestTag)
-			// TODO(benesch): redundant. which to keep?
+		// TODO(benesch): redundant. which to keep?
+		if _, backported := re.branchCommits[branch].messageIDs[c.MessageID()]; backported {
 			backportStatus = "✓"
-
+		}
+		// Get tags from all release branches. not just the currently selected
+		// one. This makes it easier for CS and TSE to know whether a commit
+		// has been released yet.
+		for _, releaseBranch := range re.releaseBranches {
+			if cIdx, backported := re.branchCommits[releaseBranch].messageIDs[c.MessageID()]; backported {
+				backportCommit := re.branchCommits[releaseBranch].commits[cIdx]
+				oldestTags = append(oldestTags, backportCommit.oldestTag)
+			}
 		}
 		acommits = append(acommits, acommit{
 			commit:         c,
