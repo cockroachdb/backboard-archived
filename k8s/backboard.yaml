@@ -1,11 +1,6 @@
 # Create secrets with
 # kubectl create secret generic backboard-secrets \
-#   --from-file=ca.crt \
-#   --from-file=client.backboard.crt \
-#   --from-file=client.backboard.key \
-#   --from-literal=DB_USER=xyzzy \
-#   --from-literal=DB_ADDR=xyzzy:26257 \
-#   --from-literal=DB_NAME=xyzzy \
+#   --from-literal=DB_URL=url \
 #   --from-literal=BACKBOARD_GITHUB_TOKEN=xyzzy
 apiVersion: apps/v1
 kind: Deployment
@@ -33,20 +28,10 @@ spec:
           imagePullPolicy: Always
           name: backboard
           env:
-            - name: DB_USER
+            - name: DB_URL
               valueFrom:
                 secretKeyRef:
-                  key: DB_USER
-                  name: backboard-secrets
-            - name: DB_ADDR
-              valueFrom:
-                secretKeyRef:
-                  key: DB_ADDR
-                  name: backboard-secrets
-            - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  key: DB_NAME
+                  key: DB_URL
                   name: backboard-secrets
             - name: BACKBOARD_GITHUB_TOKEN
               valueFrom:
@@ -56,8 +41,8 @@ spec:
           command: [
             "backboard",
             "--bind", "0.0.0.0:80",
-            "--conn", "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_ADDR)/$(DB_NAME)?sslmode=verify-full&sslrootcert=/secrets/ca.crt",
-            "--branch", "release-21.1",
+            "--conn", "$(DB_URL)",
+            "--branch", "release-23.1",
           ]
           ports:
             - containerPort: 80
@@ -81,14 +66,11 @@ spec:
             requests:
               # Fairly minimal steady-state requirements.
               cpu: "100m"
-              memory: "256Mi"
+              memory: "512Mi"
             limits:
               # Needs more CPU and memory when bootstrapping.
               cpu: "2"
-              memory: "768Mi"
-          volumeMounts:
-            - mountPath: "/secrets"
-              name: secrets
+              memory: "1Gi"
       terminationGracePeriodSeconds: 30
       volumes:
         - name: secrets
