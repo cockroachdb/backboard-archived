@@ -1,3 +1,9 @@
+August 2023:
+
+This repository has been deprecated in favor of https://github.com/cockroachdb/backboard.
+
+______
+
 Backboard is a web-based tool for managing back ports of changes to maintenance
 branches.
 
